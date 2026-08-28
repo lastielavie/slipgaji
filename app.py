@@ -17,19 +17,13 @@ except ImportError:
 st.set_page_config(page_title="Cetak Slip Gaji Teknisi", layout="wide", page_icon="🧾")
 
 # ---------------------------------------------------------------------------
-# Konfigurasi & Aset
+# Konfigurasi & Aset Logo (jika ada folder assets)
 # ---------------------------------------------------------------------------
 DIR_ASET = Path(__file__).parent / "assets"
 LOGO_MADINAH = DIR_ASET / "logo-madinah.png"
 LOGO_MFLASH = DIR_ASET / "logo-mflash.png"
 
 KATEGORI_ORDER = ['Interface', 'Normal', 'Mati Total', 'Promo', 'Lainnya']
-KOLOM_POTONGAN = [
-    'Potongan Refund', 'Potongan AR', 'Potongan Kasbon', 'Keterlambatan',
-    'Potongan Minus Audit', 'Potongan Audit Compliance',
-    'Biaya Pendaftaran Koperasi', 'Simpanan Pokok', 'Simpanan Wajib'
-]
-KOLOM_CADANGAN = ['Cadangan 7 Tahun / bulan', 'Cadangan 7 Tahun']
 
 PETA_POTONGAN_SLIP = [
     ('Potongan Kasbon', ['Potongan Kasbon']),
@@ -42,7 +36,7 @@ PETA_POTONGAN_SLIP = [
 ]
 
 # ---------------------------------------------------------------------------
-# Fungsi Pembantu & Generator PDF
+# Fungsi Pembantu & Parser Excel Sheet RAW
 # ---------------------------------------------------------------------------
 def rupiah(v) -> str:
     try:
@@ -58,57 +52,119 @@ def _nama_berkas_aman(teks, cadangan='TANPA-NAMA'):
     return (aman[:80] or cadangan)
 
 
-@st.cache_data(show_spinner="Membaca berkas potongan...")
-def baca_potongan(isi: bytes):
-    """Membaca data potongan dari Excel hasil pengisian finance."""
-    hasil, terbaca = {}, 0
-    xls = pd.ExcelFile(io.BytesIO(isi), engine='openpyxl')
-    for sheet in xls.sheet_names:
-        try:
-            d = xls.parse(sheet, header=3)
-        except Exception:
-            continue
-        if 'Nama Teknisi' not in d.columns or 'Cabang' not in d.columns:
-            continue
-        if not any(k in d.columns for k in KOLOM_POTONGAN):
-            continue
-        d = d[d['Nama Teknisi'].notna() & (d['Nama Teknisi'].astype(str) != 'TOTAL')]
-        for _, r in d.iterrows():
-            kunci = (str(r['Cabang']).strip().upper(),
-                     str(r['Nama Teknisi']).strip().upper())
-            isi_baris = {}
-            for kol in KOLOM_POTONGAN + KOLOM_CADANGAN:
-                v = r.get(kol)
-                isi_baris[kol] = 0.0 if v is None or pd.isna(v) else float(v)
-            hasil[kunci] = isi_baris
-            terbaca += 1
-    return hasil, terbaca
+def parse_excel_file(file_bytes, file_name):
+    """Membaca file Excel dan mendeteksi sheet RAW serta periode secara otomatis."""
+    periode_str = ""
+    sheet_used = ""
 
+    if file_name.lower().endswith(('.csv', '.csv.gz')):
+        df_raw = pd.read_csv(io.BytesIO(file_bytes))
+        sheet_used = "CSV"
+    else:
+        xls = pd.ExcelFile(io.BytesIO(file_bytes), engine='openpyxl')
+        
+        # 1. Cari sheet 'RAW'
+        target_sheet = None
+        if 'RAW' in xls.sheet_names:
+            target_sheet = 'RAW'
+        else:
+            for s in xls.sheet_names:
+                if 'RAW' in s.upper():
+                    target_sheet = s
+                    break
+            if not target_sheet:
+                target_sheet = xls.sheet_names[0]
+                
+        sheet_used = target_sheet
+        
+        # 2. Cek posisi header & ekstrak teks Periode dari baris atas
+        df_temp = pd.read_excel(xls, sheet_name=target_sheet, header=None)
+        header_row_idx = 0
+        
+        for i in range(min(10, len(df_temp))):
+            row_str_vals = [str(v).strip() for v in df_temp.iloc[i].values]
+            row_text = " ".join(row_str_vals)
+            
+            # Deteksi Teks Periode (misal: "Periode: 24 Juli 2026 – 23 Agustus 2026")
+            if "Periode:" in row_text and not periode_str:
+                parts = row_text.split("Periode:")
+                if len(parts) > 1:
+                    periode_str = parts[1].split("·")[0].strip()
+            
+            # Deteksi Baris Header 'Nama Teknisi'
+            if any('NAMA TEKNISI' in str(v).upper() for v in row_str_vals):
+                header_row_idx = i
+                break
+                
+        df_raw = pd.read_excel(xls, sheet_name=target_sheet, header=header_row_idx)
 
-def _baris_slip(sub, potongan):
-    """Menghitung angka pendapatan & potongan untuk satu slip teknisi."""
-    per_kual = []
-    for lbl in KATEGORI_ORDER:
-        s = sub[sub['TARIF_LABEL'] == lbl] if 'TARIF_LABEL' in sub.columns else pd.DataFrame()
-        if s.empty:
-            continue
-        omzet = s['TOTAL HARGA'].sum() if 'TOTAL HARGA' in s.columns else 0.0
-        bh = s['BAGI_HASIL'].sum() if 'BAGI_HASIL' in s.columns else 0.0
-        if omzet > 0 or bh > 0:
-            per_kual.append((lbl, omzet, bh / omzet if omzet else 0.0, bh))
+    df_raw.columns = [str(c).strip() for c in df_raw.columns]
     
-    bruto = sum(x[3] for x in per_kual) if per_kual else sub['BAGI_HASIL'].sum() if 'BAGI_HASIL' in sub.columns else 0.0
+    # Standarisasi nama kolom penting
+    col_map = {}
+    for c in df_raw.columns:
+        cu = c.upper()
+        if cu in ['NAMA TEKNISI', 'TEKNISI']:
+            col_map[c] = 'TEKNISI'
+        elif cu in ['CABANG']:
+            col_map[c] = 'CABANG'
+        elif cu in ['BAGI HASIL (ATURAN)', 'BAGI HASIL', 'BAGI_HASIL', 'BRUTO']:
+            col_map[c] = 'BAGI_HASIL'
+        elif cu in ['TOTAL POTONGAN', 'TOTAL_POTONGAN']:
+            col_map[c] = 'TOTAL_POTONGAN'
+        elif cu in ['NETT BAGI HASIL', 'NETT']:
+            col_map[c] = 'NETT_BAGI_HASIL'
+        elif cu in ['GAJI TEKNISI']:
+            col_map[c] = 'GAJI_TEKNISI'
+            
+    df_data = df_raw.rename(columns=col_map)
+    
+    # Filter hanya baris teknisi yang valid
+    if 'TEKNISI' in df_data.columns:
+        df_data = df_data[df_data['TEKNISI'].notna()]
+        df_data = df_data[~df_data['TEKNISI'].astype(str).str.strip().str.upper().isin(
+            ['TOTAL', 'NAN', 'NONE', '', 'UNNAMED: 0']
+        )]
+        
+    return df_data, periode_str, sheet_used
 
+
+def extract_slip_data_from_row(row):
+    """Mengambil pendapatan per kualifikasi & potongan langsung dari baris sheet RAW."""
+    per_kual = []
+    for k in KATEGORI_ORDER:
+        omzet_col = f"Omzet {k}"
+        bh_col = f"Bagi Hasil {k}"
+        
+        omzet = float(row.get(omzet_col, 0) or 0)
+        bh = float(row.get(bh_col, 0) or 0)
+        
+        if omzet > 0 or bh > 0:
+            akad_pct = bh / omzet if omzet > 0 else 0.0
+            per_kual.append((k, omzet, akad_pct, bh))
+            
+    bruto = float(row.get('BAGI_HASIL', 0) or 0)
+    if not bruto and per_kual:
+        bruto = sum(x[3] for x in per_kual)
+        
     pot = []
-    for label, kolom in PETA_POTONGAN_SLIP:
-        pot.append((label, sum(float(potongan.get(k, 0) or 0) for k in kolom)))
-    total_pot = sum(x[1] for x in pot)
+    for label, cols in PETA_POTONGAN_SLIP:
+        val = sum(float(row.get(c, 0) or 0) for c in cols)
+        pot.append((label, val))
+        
+    total_pot = float(row.get('TOTAL_POTONGAN', 0) or 0)
+    if not total_pot and pot:
+        total_pot = sum(x[1] for x in pot)
+        
+    nett = float(row.get('NETT_BAGI_HASIL', 0) or (bruto - total_pot))
+    
+    return per_kual, bruto, pot, total_pot, nett
 
-    return per_kual, bruto, pot, total_pot, bruto - total_pot
-
-
+# ---------------------------------------------------------------------------
+# Generator PDF Slip Gaji
+# ---------------------------------------------------------------------------
 def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
-    """Menggambar layout slip gaji pada Canvas ReportLab."""
+    """Menggambar desain PDF Slip Gaji."""
     per_kual, bruto, pot, total_pot, nett = angka
     m = 18 * mm
     y = tinggi - 14 * mm
@@ -160,7 +216,7 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     judul_tabel('PENDAPATAN PER KUALIFIKASI')
     c.setFont('Helvetica', 9)
     if not per_kual:
-        c.drawString(m + 2 * mm, y, '(tidak ada rincian transaksi per kualifikasi)')
+        c.drawString(m + 2 * mm, y, '(rincian kualifikasi tidak ditemukan)')
         y -= 5.4 * mm
     for lbl, omzet, akad, bh in per_kual:
         c.drawString(m + 2 * mm, y, lbl)
@@ -225,43 +281,41 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
         c.drawCentredString(x + 16 * mm, y - 4.5 * mm, teks)
 
 
-def buat_pdf_teknisi(sub, nama, cabang, potongan, catatan, periode):
-    """Menghasilkan stream bytes PDF untuk satu teknisi."""
-    buf = io.BytesIO()
-    lebar, tinggi = A4
-    c = canvas.Canvas(buf, pagesize=A4)
-    c.setTitle(f'Slip Bagi Hasil — {nama} ({cabang})')
-    c.setAuthor('Madinah Flash')
-    pot = potongan.get((str(cabang).strip().upper(), str(nama).strip().upper()), {})
-    _gambar_slip(c, lebar, tinggi, nama, cabang, periode, _baris_slip(sub, pot), catatan)
-    c.showPage()
-    c.save()
-    buf.seek(0)
-    return buf.getvalue()
-
-
-def buat_zip_slip(df_sumber, potongan, catatan, periode, zip_per_cabang=False):
-    """Menghasilkan file ZIP berisi seluruh PDF slip gaji teknisi."""
-    d = df_sumber.copy()
-    d['CABANG'] = d['CABANG'].astype(str).str.strip()
-    d['TEKNISI'] = d['TEKNISI'].astype(str).str.strip()
-    
+def generate_zip_slips(df_data, periode_txt, catatan_slip, zip_per_cabang=False):
+    """Membuat file ZIP berisi seluruh file PDF Slip Gaji."""
     buf = io.BytesIO()
     ringkas = []
+    
+    cabang_col = 'CABANG' if 'CABANG' in df_data.columns else df_data.columns[1]
+    
     with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as luar:
-        for cab in sorted(d['CABANG'].unique()):
-            sub_cab = d[d['CABANG'] == cab]
-            if sub_cab.empty:
+        for cab, grp in df_data.groupby(cabang_col):
+            if grp.empty:
                 continue
-            folder = _nama_berkas_aman(cab, 'CABANG')
+            cab_str = str(cab).strip()
+            folder = _nama_berkas_aman(cab_str, 'CABANG')
             berkas = []
-            for nama in sorted(sub_cab['TEKNISI'].unique()):
-                if nama.upper() in ['TIDAK ADA TEKNISI', 'NAN', 'NONE', '']:
-                    continue
-                sub_tek = sub_cab[sub_cab['TEKNISI'] == nama]
-                isi = buat_pdf_teknisi(sub_tek, nama, cab, potongan, catatan, periode)
-                berkas.append((f'{folder} - {_nama_berkas_aman(nama)}.pdf', isi))
             
+            for _, row in grp.iterrows():
+                nama = str(row['TEKNISI']).strip()
+                if not nama or nama.upper() in ['TOTAL', 'NAN', 'NONE', 'TIDAK ADA TEKNISI']:
+                    continue
+                    
+                angka = extract_slip_data_from_row(row)
+                
+                pdf_buf = io.BytesIO()
+                lebar, tinggi = A4
+                c = canvas.Canvas(pdf_buf, pagesize=A4)
+                c.setTitle(f'Slip Bagi Hasil — {nama} ({cab_str})')
+                c.setAuthor('Madinah Flash')
+                
+                _gambar_slip(c, lebar, tinggi, nama, cab_str, periode_txt, angka, catatan_slip)
+                c.showPage()
+                c.save()
+                pdf_buf.seek(0)
+                
+                berkas.append((f'{folder} - {_nama_berkas_aman(nama)}.pdf', pdf_buf.getvalue()))
+                
             if not berkas:
                 continue
 
@@ -274,8 +328,8 @@ def buat_zip_slip(df_sumber, potongan, catatan, periode, zip_per_cabang=False):
             else:
                 for nm, isi in berkas:
                     luar.writestr(f'{folder}/{nm}', isi)
-            ringkas.append({'Cabang': cab, 'Slip': len(berkas)})
-
+            ringkas.append({'Cabang': cab_str, 'Jumlah Slip': len(berkas)})
+            
     buf.seek(0)
     return buf.getvalue(), pd.DataFrame(ringkas)
 
@@ -283,127 +337,94 @@ def buat_zip_slip(df_sumber, potongan, catatan, periode, zip_per_cabang=False):
 # Antarmuka Aplikasi Streamlit
 # ---------------------------------------------------------------------------
 st.title("🧾 Aplikasi Cetak Slip Gaji Teknisi")
-st.caption("Generator PDF Slip Gaji Teknisi Madinah Flash per Cabang")
+st.caption("Generator PDF Slip Gaji Teknisi Madinah Flash dari Sheet RAW Excel")
 
 if not REPORTLAB_AVAILABLE:
-    st.error("Library `reportlab` belum terinstal. Silakan jalankan `pip install reportlab` untuk menggunakan fitur cetak PDF.")
+    st.error("Library `reportlab` belum terinstal. Pastikan file `requirements.txt` berisi `reportlab` dan sudah di-commit ke GitHub.")
     st.stop()
 
-col_left, col_right = st.columns([1, 1])
+# 1. Upload File Excel tunggal
+uploaded_file = st.file_uploader(
+    "Upload 1 File Excel (misal: '05 BAGI HASIL TEKNISI CILANGKAP AGUSTUS 2026.xlsx')",
+    type=['xlsx', 'xls', 'csv', 'gz'],
+    key='main_uploader'
+)
 
-with col_left:
-    st.subheader("1. Unggah Data Data Penjualan / Bagi Hasil")
-    up_sales = st.file_uploader(
-        "Upload file data penjualan / rekap (CSV atau Excel)",
-        type=['csv', 'xlsx', 'gz'],
-        key='up_sales_slip'
-    )
-
-with col_right:
-    st.subheader("2. Unggah Berkas Potongan (Opsional)")
-    up_pot = st.file_uploader(
-        "Upload file Excel potongan (diisi oleh Finance)",
-        type=['xlsx'],
-        key='up_pot_slip',
-        help="Berkas Excel hasil ekspor rekap yang sudah diisi kolom potongannya. Jika kosong, seluruh potongan dianggap Rp 0."
-    )
-
-st.divider()
-
-# Pengaturan Informasi Slip
-st.subheader("3. Pengaturan Slip Gaji")
-c_p1, c_p2 = st.columns(2)
-
-with c_p1:
-    periode_input = st.text_input("Label Periode Gaji", value="24 Juni 2026 – 23 Juli 2026")
-    bentuk = st.radio(
-        "Format Pengelompokan Berkas ZIP",
-        ['Folder per cabang', 'ZIP per cabang'],
-        horizontal=True,
-        key='bentuk_zip_app'
-    )
-
-with c_p2:
-    catatan_slip = st.text_area(
-        "Catatan pada Slip",
-        value="Slip gaji ini dikeluarkan otomatis oleh sistem dan sah tanpa tanda tangan basah.",
-        height=100
-    )
-
-# Proses Data Penjualan
-df_jasa = pd.DataFrame()
-if up_sales is not None:
+if uploaded_file is not None:
     try:
-        if up_sales.name.endswith('.csv') or up_sales.name.endswith('.csv.gz'):
-            df_jasa = pd.read_csv(up_sales)
-        else:
-            df_jasa = pd.read_excel(up_sales)
-
-        # Normalisasi Kolom Wajib
-        col_map = {}
-        for c in df_jasa.columns:
-            cu = str(c).upper().strip()
-            if cu in ['TEKNISI', 'NAMA TEKNISI', 'NAMA TEKNISI (FINAL)']:
-                col_map[c] = 'TEKNISI'
-            elif cu in ['CABANG']:
-                col_map[c] = 'CABANG'
-            elif cu in ['TOTAL HARGA', 'OMZET', 'OMZET JASA']:
-                col_map[c] = 'TOTAL HARGA'
-            elif cu in ['BAGI HASIL', 'BAGI_HASIL', 'BAGI HASIL (ATURAN)']:
-                col_map[c] = 'BAGI_HASIL'
-            elif cu in ['TARIF_LABEL', 'KATEGORI TARIF', 'KUALIFIKASI']:
-                col_map[c] = 'TARIF_LABEL'
+        df_parsed, auto_periode, sheet_used = parse_excel_file(
+            uploaded_file.getvalue(), uploaded_file.name
+        )
         
-        df_jasa = df_jasa.rename(columns=col_map)
+        st.success(f"Berhasil membaca sheet **'{sheet_used}'**! Ditemukan **{len(df_parsed)} data teknisi**.")
         
-        # Validasi minimal kolom TEKNISI & CABANG
-        if 'TEKNISI' not in df_jasa.columns or 'CABANG' not in df_jasa.columns:
-            st.error("File data harus memiliki minimal kolom `TEKNISI` dan `CABANG`.")
-            df_jasa = pd.DataFrame()
-        else:
-            if 'BAGI_HASIL' not in df_jasa.columns:
-                df_jasa['BAGI_HASIL'] = df_jasa['TOTAL HARGA'] if 'TOTAL HARGA' in df_jasa.columns else 0.0
-            st.success(f"Data terbaca: {len(df_jasa):,} baris transaksi.")
-    except Exception as e:
-        st.error(f"Gagal membaca file data: {e}")
+        st.divider()
+        
+        # 2. Pengaturan Slip Gaji
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            periode_input = st.text_input(
+                "Label Periode Gaji",
+                value=auto_periode if auto_periode else "24 Juli 2026 – 23 Agustus 2026",
+                help="Otomatis terdeteksi dari isi sheet RAW atau bisa diubah manual."
+            )
+            bentuk = st.radio(
+                "Format Pengelompokan File ZIP",
+                ['Folder per cabang', 'ZIP per cabang'],
+                horizontal=True
+            )
+            
+        with col2:
+            catatan_slip = st.text_area(
+                "Catatan pada Slip",
+                value="Slip gaji ini dikeluarkan otomatis oleh sistem dan sah tanpa tanda tangan basah.",
+                height=100
+            )
 
-# Baca Potongan
-potongan_map = {}
-if up_pot is not None:
-    try:
-        potongan_map, n_pot = baca_potongan(up_pot.getvalue())
-        st.success(f"Potongan terbaca untuk {n_pot:,} baris teknisi.")
-    except Exception as e:
-        st.error(f"Berkas potongan tidak dapat diproses: {e}")
-
-st.divider()
-
-# Tombol Eksekusi
-if not df_jasa.empty:
-    if st.button("🧾 Siapkan Slip Gaji PDF", use_container_width=True, type="primary"):
-        with st.spinner("Menyusun berkas PDF slip gaji..."):
-            try:
-                zip_bytes, ringkas_df = buat_zip_slip(
-                    df_jasa, potongan_map, catatan_slip, periode_input,
-                    zip_per_cabang=(bentuk == 'ZIP per cabang')
+        # 3. Preview Ringkasan Data
+        st.subheader("Preview Data Slip Gaji")
+        preview_list = []
+        for _, r in df_parsed.iterrows():
+            _, bruto, _, total_pot, nett = extract_slip_data_from_row(r)
+            preview_list.append({
+                'Nama Teknisi': r.get('TEKNISI', '-'),
+                'Cabang': r.get('CABANG', '-'),
+                'Bruto Bagi Hasil': rupiah(bruto),
+                'Total Potongan': rupiah(total_pot),
+                'Nett Bagi Hasil': rupiah(nett)
+            })
+        st.dataframe(pd.DataFrame(preview_list), use_container_width=True, hide_index=True)
+        
+        st.divider()
+        
+        # 4. Tombol Generate PDF
+        if st.button("🧾 Siapkan & Cetak Slip Gaji PDF", type="primary", use_container_width=True):
+            with st.spinner("Menyusun berkas PDF slip gaji..."):
+                zip_bytes, summary_df = generate_zip_slips(
+                    df_parsed, periode_input, catatan_slip, zip_per_cabang=(bentuk == 'ZIP per cabang')
                 )
-                st.session_state['result_zip'] = zip_bytes
-                st.session_state['result_summary'] = ringkas_df
-            except Exception as e:
-                st.error(f"Terjadi kesalahan saat membuat PDF: {e}")
+                st.session_state['ready_zip'] = zip_bytes
+                st.session_state['ready_summary'] = summary_df
+                
+        if st.session_state.get('ready_zip') is not None:
+            st.subheader("Unduh Berkas Slip Gaji")
+            st.download_button(
+                label="⬇️ Unduh Semua Slip Gaji (.ZIP)",
+                data=st.session_state['ready_zip'],
+                file_name=f"slip_gaji_teknisi_{_nama_berkas_aman(periode_input)}.zip",
+                mime="application/zip",
+                use_container_width=True
+            )
+            
+            summary_df = st.session_state.get('ready_summary')
+            if summary_df is not None and not summary_df.empty:
+                st.caption(f"Total **{int(summary_df['Jumlah Slip'].sum()):,} slip PDF** berhasil dibuat.")
+                with st.expander("Rincian Jumlah Slip per Cabang"):
+                    st.dataframe(summary_df, hide_index=True, use_container_width=True)
 
-if st.session_state.get('result_zip') is not None:
-    st.subheader("4. Unduh Berkas Slip Gaji")
-    st.download_button(
-        label="⬇️ Unduh Semua Slip Gaji (.ZIP)",
-        data=st.session_state['result_zip'],
-        file_name=f"slip_gaji_teknisi_{periode_input.replace(' ', '_')}.zip",
-        mime="application/zip",
-        use_container_width=True
-    )
-    
-    rs = st.session_state.get('result_summary')
-    if rs is not None and not rs.empty:
-        st.caption(f"Total **{int(rs['Slip'].sum()):,} slip** berhasil dibuat untuk **{len(rs)} cabang**.")
-        with st.expander("Rincian Jumlah Slip per Cabang"):
-            st.dataframe(rs, hide_index=True, use_container_width=True)
+    except Exception as e:
+        st.error(f"Gagal memproses file Excel: {e}")
+
+else:
+    st.info("Silakan upload file Excel yang berisi sheet **RAW** untuk memulai.")
