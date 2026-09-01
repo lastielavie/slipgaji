@@ -198,8 +198,7 @@ def extract_slip_data_from_row(row, columns):
         
     raw_nett = row.get('NETT_BAGI_HASIL', row.get('Nett Bagi hasil', None))
     if raw_nett is not None and not pd.isna(raw_nett):
-        nett = float(raw_nett)
-        nett += topup_val
+        nett = float(raw_nett) + topup_val
     else:
         nett = bruto - total_pot
         
