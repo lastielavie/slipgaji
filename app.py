@@ -166,6 +166,18 @@ def extract_slip_data_from_row(row, columns):
             akad_pct = bh / omzet if omzet > 0 else 0.0
             per_kual.append((cat, omzet, akad_pct, bh))
             
+    # Tambahkan Topup Gaji dari kolom gaji teknisi
+    topup_raw = None
+    for c in row.index:
+        if str(c).strip().lower() == "gaji teknisi":
+            topup_raw = row.get(c)
+            break
+            
+    if topup_raw is not None:
+        topup_val = 0.0 if pd.isna(topup_raw) else float(topup_raw or 0)
+        if topup_val != 0:
+            per_kual.append(("Topup Gaji", 0.0, 0.0, topup_val))
+            
     raw_bruto = row.get('BAGI_HASIL', row.get('Bagi Hasil (Aturan)', 0))
     bruto = 0.0 if pd.isna(raw_bruto) else float(raw_bruto or 0)
     if not bruto and per_kual:
@@ -187,14 +199,25 @@ def extract_slip_data_from_row(row, columns):
         nett = float(raw_nett)
     else:
         nett = bruto - total_pot
+        
+    cadangan_bulan = 0.0
+    cadangan_total = 0.0
+    for c in row.index:
+        c_low = str(c).strip().lower()
+        if c_low == "cadangan 7 tahun / bulan":
+            val = row.get(c)
+            cadangan_bulan = 0.0 if pd.isna(val) else float(val or 0)
+        elif c_low == "total cadangan 7 tahun":
+            val = row.get(c)
+            cadangan_total = 0.0 if pd.isna(val) else float(val or 0)
     
-    return per_kual, bruto, pot, total_pot, nett, categories, pot_cols
+    return per_kual, bruto, pot, total_pot, nett, categories, pot_cols, cadangan_bulan, cadangan_total
 
 # ---------------------------------------------------------------------------
 # Generator PDF
 # ---------------------------------------------------------------------------
 def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
-    per_kual, bruto, pot, total_pot, nett = angka
+    per_kual, bruto, pot, total_pot, nett, cadangan_bulan, cadangan_total = angka
     m = 18 * mm
     y = tinggi - 14 * mm
 
@@ -288,7 +311,21 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     c.drawString(m + 2 * mm, y, 'NETT BAGI HASIL')
     c.drawRightString(lebar - m - 2 * mm, y, rupiah(nett))
     c.setFillColorRGB(0, 0, 0)
-    y -= 12 * mm
+    y -= 10 * mm
+
+    if cadangan_bulan != 0 or cadangan_total != 0:
+        c.setFont('Helvetica', 8.5)
+        if cadangan_bulan != 0:
+            c.drawString(m + 2 * mm, y, 'Cadangan 7 Tahun / bulan')
+            c.drawRightString(lebar - m - 2 * mm, y, rupiah(cadangan_bulan))
+            y -= 4.5 * mm
+        if cadangan_total != 0:
+            c.drawString(m + 2 * mm, y, 'Total Cadangan 7 Tahun')
+            c.drawRightString(lebar - m - 2 * mm, y, rupiah(cadangan_total))
+            y -= 4.5 * mm
+        y -= 2 * mm
+    else:
+        y -= 2 * mm
 
     c.setFont('Helvetica-Bold', 8)
     c.drawString(m, y, 'Catatan')
@@ -332,7 +369,7 @@ def generate_zip_slips(df_data, periode_txt, catatan_slip, zip_per_cabang=False)
                     continue
                     
                 angka_data = extract_slip_data_from_row(row, df_data.columns)
-                angka = angka_data[:5]
+                angka = angka_data[:5] + (angka_data[7], angka_data[8])
                 
                 pdf_buf = io.BytesIO()
                 lebar, tinggi = A4
@@ -470,7 +507,7 @@ if uploaded_file is not None:
                     p_col = p_row["Jenis Potongan"]
                     df_parsed.at[idx, p_col] = p_row["Jumlah"]
 
-            per_kual_new, bruto_new, pot_new, total_pot_new, nett_new, _, _ = extract_slip_data_from_row(df_parsed.loc[idx], df_parsed.columns)
+            per_kual_new, bruto_new, pot_new, total_pot_new, nett_new, _, _, _, _ = extract_slip_data_from_row(df_parsed.loc[idx], df_parsed.columns)
             df_parsed.at[idx, 'BAGI_HASIL'] = bruto_new
             df_parsed.at[idx, 'TOTAL_POTONGAN'] = total_pot_new
             df_parsed.at[idx, 'NETT_BAGI_HASIL'] = nett_new
@@ -485,7 +522,7 @@ if uploaded_file is not None:
         st.subheader("Preview Ringkasan Semua Data Slip Gaji")
         preview_list = []
         for _, r in df_parsed.iterrows():
-            _, bruto, _, total_pot, nett, _, _ = extract_slip_data_from_row(r, df_parsed.columns)
+            _, bruto, _, total_pot, nett, _, _, _, _ = extract_slip_data_from_row(r, df_parsed.columns)
             preview_list.append({
                 'Nama Teknisi': r.get('TEKNISI', '-'),
                 'Cabang': r.get('CABANG', '-'),
