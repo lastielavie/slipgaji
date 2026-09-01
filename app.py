@@ -166,7 +166,7 @@ def extract_slip_data_from_row(row, columns):
             akad_pct = bh / omzet if omzet > 0 else 0.0
             per_kual.append((cat, omzet, akad_pct, bh))
             
-    # Tambahkan Topup Gaji dari kolom gaji teknisi
+    topup_val = 0.0
     topup_raw = None
     for c in row.index:
         if str(c).strip().lower() == "gaji teknisi":
@@ -182,6 +182,8 @@ def extract_slip_data_from_row(row, columns):
     bruto = 0.0 if pd.isna(raw_bruto) else float(raw_bruto or 0)
     if not bruto and per_kual:
         bruto = sum(x[3] for x in per_kual)
+    elif bruto != 0:
+        bruto += topup_val
         
     pot = []
     for col in pot_cols:
@@ -197,6 +199,7 @@ def extract_slip_data_from_row(row, columns):
     raw_nett = row.get('NETT_BAGI_HASIL', row.get('Nett Bagi hasil', None))
     if raw_nett is not None and not pd.isna(raw_nett):
         nett = float(raw_nett)
+        nett += topup_val
     else:
         nett = bruto - total_pot
         
