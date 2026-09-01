@@ -169,7 +169,10 @@ def extract_slip_data_from_row(row, columns):
     for cat in categories:
         omzet = float(row.get(f"Omzet {cat}", 0) or 0)
         bh = float(row.get(f"Bagi Hasil {cat}", 0) or 0)
-        if omzet > 0 or bh > 0:
+        
+        # REVISI DI SINI:
+        # Menampilkan kategori jika Omzet > 0 ATAU Bagi Hasil != 0 (termasuk kasus Persaudaraan)
+        if omzet > 0 or bh != 0:
             akad_pct = bh / omzet if omzet > 0 else 0.0
             per_kual.append((cat, omzet, akad_pct, bh))
             
