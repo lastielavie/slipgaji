@@ -63,6 +63,7 @@ def get_dynamic_potongan_cols(columns, categories):
         'nama teknisi', 'teknisi', 'cabang', 'baris',
         'omzet jasa (total)', 'omzet total', 'omzet jasa',
         'bagi hasil (aturan)', 'bagi hasil total', 'bagi_hasil',
+        'total bagi hasil (aturan)', 'total bagi hasil',  # <-- Dihapus dari tabel potongan
         'pembanding 30%', 'selisih', 'efektif %',
         'total potongan', 'total_potongan',
         'gaji teknisi', 'gaji_teknisi',
@@ -173,7 +174,6 @@ def extract_slip_data_from_row(row, columns):
     pot = []
     for col in pot_cols:
         val_raw = row.get(col, 0)
-        # Penanganan NaN menjadi Rp 0
         val = 0.0 if pd.isna(val_raw) else float(val_raw or 0)
         pot.append((col, val))
         
@@ -399,7 +399,8 @@ if uploaded_file is not None:
             periode_input = st.text_input("Label Periode Gaji", value=auto_periode if auto_periode else "24 Juli 2026 – 23 Agustus 2026")
             bentuk = st.radio("Format Pengelompokan File ZIP", ['Folder per cabang', 'ZIP per cabang'], horizontal=True)
         with col2:
-            catatan_slip = st.text_area("Catatan pada Slip", value="Slip gaji ini dikeluarkan otomatis oleh sistem dan sah tanpa tanda tangan basah.", height=100)
+            # Mengosongkan catatan default sesuai permintaan
+            catatan_slip = st.text_area("Catatan pada Slip", value="", height=100, help="Dapat diisi catatan manual jika ada.")
 
         st.divider()
 
@@ -443,7 +444,6 @@ if uploaded_file is not None:
                     }
                 )
                 
-                # Simpan perubahan kualifikasi ke DataFrame
                 for _, e_row in edited_kual.iterrows():
                     cat = e_row["Kategori"]
                     df_parsed.at[idx, f"Omzet {cat}"] = e_row["Omzet"]
@@ -466,12 +466,10 @@ if uploaded_file is not None:
                     }
                 )
 
-                # Simpan perubahan potongan ke DataFrame
                 for _, p_row in edited_pot.iterrows():
                     p_col = p_row["Jenis Potongan"]
                     df_parsed.at[idx, p_col] = p_row["Jumlah"]
 
-            # Update hitungan Total
             per_kual_new, bruto_new, pot_new, total_pot_new, nett_new, _, _ = extract_slip_data_from_row(df_parsed.loc[idx], df_parsed.columns)
             df_parsed.at[idx, 'BAGI_HASIL'] = bruto_new
             df_parsed.at[idx, 'TOTAL_POTONGAN'] = total_pot_new
