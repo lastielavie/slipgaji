@@ -287,18 +287,18 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     has_pot = False
     
     # ---------------------------------------------------------
-    # HANYA PISAHKAN "TABUNGAN RUMAH" DARI LIST POTONGAN UTAMA
+    # MENANGKAP KATA "TABUNGAN" AGAR PINDAH KE BAWAH
     # ---------------------------------------------------------
     pot_tampil = []
-    tabungan_rumah_val = 0.0
+    tabungan_val = 0.0
     for label, nilai in pot:
         lbl_low = str(label).strip().lower()
-        if lbl_low == "tabungan rumah":
-            tabungan_rumah_val += nilai
+        if "tabungan" in lbl_low:
+            tabungan_val += nilai
         else:
             pot_tampil.append((label, nilai))
             
-    # Tampilkan potongan sisanya (termasuk simpanan/tabungan lain dan nilai 0)
+    # Tampilkan potongan sisanya di tabel atas
     for label, nilai in pot_tampil:
         c.drawString(m + 2 * mm, y, str(label))
         c.drawRightString(lebar - m - 2 * mm, y, rupiah(nilai))
@@ -327,9 +327,9 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     y -= 10 * mm
 
     # ---------------------------------------------------------
-    # TAMPILKAN CADANGAN & TABUNGAN RUMAH DI BAWAH (HANYA JIKA != 0)
+    # TAMPILKAN DI BAWAH (HANYA JIKA CADANGAN ATAU TABUNGAN != 0)
     # ---------------------------------------------------------
-    if cadangan_bulan != 0 or cadangan_total != 0 or tabungan_rumah_val != 0:
+    if cadangan_bulan != 0 or cadangan_total != 0 or tabungan_val != 0:
         c.setFont('Helvetica', 8.5)
         if cadangan_bulan != 0:
             c.drawString(m + 2 * mm, y, 'Cadangan 7 Tahun / bulan')
@@ -339,10 +339,10 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
             c.drawString(m + 2 * mm, y, 'Total Cadangan 7 Tahun')
             c.drawRightString(lebar - m - 2 * mm, y, rupiah(cadangan_total))
             y -= 4.5 * mm
-        # Tabungan Rumah hanya tampil di bawah jika nilainya tidak 0
-        if tabungan_rumah_val != 0:
-            c.drawString(m + 2 * mm, y, 'Tabungan Rumah')
-            c.drawRightString(lebar - m - 2 * mm, y, rupiah(tabungan_rumah_val))
+        # Tabungan (seperti Tabungan Teknisi 5%) hanya tampil jika nilainya tidak 0
+        if tabungan_val != 0:
+            c.drawString(m + 2 * mm, y, 'Tabungan Teknisi 5%')
+            c.drawRightString(lebar - m - 2 * mm, y, rupiah(tabungan_val))
             y -= 4.5 * mm
         y -= 2 * mm
     else:
