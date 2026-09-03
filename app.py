@@ -63,7 +63,7 @@ def get_dynamic_potongan_cols(columns, categories):
         'nama teknisi', 'teknisi', 'cabang', 'baris',
         'omzet jasa (total)', 'omzet total', 'omzet jasa',
         'bagi hasil (aturan)', 'bagi hasil total', 'bagi_hasil',
-        'total bagi hasil (aturan)', 'total bagi hasil',  # <-- Dihapus dari tabel potongan
+        'total bagi hasil (aturan)', 'total bagi hasil',
         'pembanding 30%', 'selisih', 'efektif %',
         'total potongan', 'total_potongan',
         'gaji teknisi', 'gaji_teknisi',
@@ -287,17 +287,20 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     has_pot = False
     
     # ---------------------------------------------------------
-    # PISAHKAN TABUNGAN RUMAH DARI LIST POTONGAN UTAMA
+    # PISAHKAN TABUNGAN / SIMPANAN DARI LIST POTONGAN UTAMA
     # ---------------------------------------------------------
     pot_tampil = []
-    tabungan_rumah_val = 0.0
+    tabungan_items = []
     for label, nilai in pot:
-        if "tabungan rumah" in str(label).lower():
-            tabungan_rumah_val += nilai
+        lbl_low = str(label).lower()
+        # Menangkap semua jenis kolom yang mengandung kata 'tabungan' atau 'simpanan'
+        if "tabungan" in lbl_low or "simpanan" in lbl_low:
+            if nilai != 0:
+                tabungan_items.append((label, nilai))
         else:
             pot_tampil.append((label, nilai))
             
-    # Tampilkan potongan sisanya (termasuk yang 0)
+    # Tampilkan potongan sisanya (termasuk yang bernilai 0)
     for label, nilai in pot_tampil:
         c.drawString(m + 2 * mm, y, str(label))
         c.drawRightString(lebar - m - 2 * mm, y, rupiah(nilai))
@@ -326,9 +329,9 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     y -= 10 * mm
 
     # ---------------------------------------------------------
-    # TAMPILKAN INFO TAMBAHAN & TABUNGAN RUMAH DI BAWAH
+    # TAMPILKAN CADANGAN & TABUNGAN/SIMPANAN DI BAWAH (HANYA JIKA != 0)
     # ---------------------------------------------------------
-    if cadangan_bulan != 0 or cadangan_total != 0 or tabungan_rumah_val != 0:
+    if cadangan_bulan != 0 or cadangan_total != 0 or tabungan_items:
         c.setFont('Helvetica', 8.5)
         if cadangan_bulan != 0:
             c.drawString(m + 2 * mm, y, 'Cadangan 7 Tahun / bulan')
@@ -338,10 +341,10 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
             c.drawString(m + 2 * mm, y, 'Total Cadangan 7 Tahun')
             c.drawRightString(lebar - m - 2 * mm, y, rupiah(cadangan_total))
             y -= 4.5 * mm
-        # Tabungan rumah hanya tampil jika nilainya tidak 0
-        if tabungan_rumah_val != 0:
-            c.drawString(m + 2 * mm, y, 'Tabungan Rumah')
-            c.drawRightString(lebar - m - 2 * mm, y, rupiah(tabungan_rumah_val))
+        # Tabungan / Simpanan hanya tampil jika nilainya tidak 0
+        for lbl_tab, val_tab in tabungan_items:
+            c.drawString(m + 2 * mm, y, str(lbl_tab))
+            c.drawRightString(lebar - m - 2 * mm, y, rupiah(val_tab))
             y -= 4.5 * mm
         y -= 2 * mm
     else:
@@ -456,7 +459,6 @@ if uploaded_file is not None:
             periode_input = st.text_input("Label Periode Gaji", value=auto_periode if auto_periode else "24 Juli 2026 – 23 Agustus 2026")
             bentuk = st.radio("Format Pengelompokan File ZIP", ['Folder per cabang', 'ZIP per cabang'], horizontal=True)
         with col2:
-            # Mengosongkan catatan default sesuai permintaan
             catatan_slip = st.text_area("Catatan pada Slip", value="", height=100, help="Dapat diisi catatan manual jika ada.")
 
         st.divider()
