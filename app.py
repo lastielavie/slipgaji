@@ -285,21 +285,7 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     c.setFont('Helvetica', 8.5)
     
     has_pot = False
-    
-    # ---------------------------------------------------------
-    # MENANGKAP KATA "TABUNGAN" AGAR PINDAH KE BAWAH
-    # ---------------------------------------------------------
-    pot_tampil = []
-    tabungan_val = 0.0
     for label, nilai in pot:
-        lbl_low = str(label).strip().lower()
-        if "tabungan" in lbl_low:
-            tabungan_val += nilai
-        else:
-            pot_tampil.append((label, nilai))
-            
-    # Tampilkan potongan sisanya di tabel atas
-    for label, nilai in pot_tampil:
         c.drawString(m + 2 * mm, y, str(label))
         c.drawRightString(lebar - m - 2 * mm, y, rupiah(nilai))
         y -= 4.8 * mm
@@ -327,9 +313,9 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     y -= 10 * mm
 
     # ---------------------------------------------------------
-    # TAMPILKAN DI BAWAH (HANYA JIKA CADANGAN ATAU TABUNGAN != 0)
+    # HANYA TAMPILKAN CADANGAN 7 TAHUN DI BAWAH (TANPA TABUNGAN RUMAH)
     # ---------------------------------------------------------
-    if cadangan_bulan != 0 or cadangan_total != 0 or tabungan_val != 0:
+    if cadangan_bulan != 0 or cadangan_total != 0:
         c.setFont('Helvetica', 8.5)
         if cadangan_bulan != 0:
             c.drawString(m + 2 * mm, y, 'Cadangan 7 Tahun / bulan')
@@ -338,11 +324,6 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
         if cadangan_total != 0:
             c.drawString(m + 2 * mm, y, 'Total Cadangan 7 Tahun')
             c.drawRightString(lebar - m - 2 * mm, y, rupiah(cadangan_total))
-            y -= 4.5 * mm
-        # Tabungan (seperti Tabungan Teknisi 5%) hanya tampil jika nilainya tidak 0
-        if tabungan_val != 0:
-            c.drawString(m + 2 * mm, y, 'Tabungan Teknisi 5%')
-            c.drawRightString(lebar - m - 2 * mm, y, rupiah(tabungan_val))
             y -= 4.5 * mm
         y -= 2 * mm
     else:
