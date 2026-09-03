@@ -538,7 +538,7 @@ if uploaded_file is not None:
         
         st.divider()
         
-        if st.button("🧾 Siapkan & Cetak Slip Gaji PDF", type="primary", use_context=True):
+        if st.button("🧾 Siapkan & Cetak Slip Gaji PDF", type="primary", use_container_width=True):
             with st.spinner("Menyusun berkas PDF slip gaji..."):
                 zip_bytes, summary_df = generate_zip_slips(
                     df_parsed, periode_input, catatan_slip, zip_per_cabang=(bentuk == 'ZIP per cabang')
