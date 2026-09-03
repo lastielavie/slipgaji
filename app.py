@@ -84,6 +84,9 @@ def get_dynamic_potongan_cols(columns, categories):
             continue
         if c_low.startswith('unnamed:') or c_low.startswith('pembanding '):
             continue
+        # Abaikan kolom yang mengandung kata 'tabungan' agar tidak masuk tabel potongan atas
+        if 'tabungan' in c_low:
+            continue
         pot_cols.append(c_str)
         
     return pot_cols
@@ -313,7 +316,7 @@ def _gambar_slip(c, lebar, tinggi, nama, cabang, periode, angka, catatan):
     y -= 10 * mm
 
     # ---------------------------------------------------------
-    # HANYA TAMPILKAN CADANGAN 7 TAHUN DI BAWAH (TANPA TABUNGAN RUMAH)
+    # HANYA TAMPILKAN CADANGAN 7 TAHUN DI BAWAH (TANPA TABUNGAN)
     # ---------------------------------------------------------
     if cadangan_bulan != 0 or cadangan_total != 0:
         c.setFont('Helvetica', 8.5)
@@ -535,7 +538,7 @@ if uploaded_file is not None:
         
         st.divider()
         
-        if st.button("🧾 Siapkan & Cetak Slip Gaji PDF", type="primary", use_container_width=True):
+        if st.button("🧾 Siapkan & Cetak Slip Gaji PDF", type="primary", use_context=True):
             with st.spinner("Menyusun berkas PDF slip gaji..."):
                 zip_bytes, summary_df = generate_zip_slips(
                     df_parsed, periode_input, catatan_slip, zip_per_cabang=(bentuk == 'ZIP per cabang')
